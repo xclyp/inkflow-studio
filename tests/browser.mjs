@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict';
+import { mkdirSync } from 'node:fs';
+import { createApp } from '../server.mjs';
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE??'playwright');
+const app=createApp({dbPath:':memory:',apiKey:'test',modelCall:async()=>({text:'这是浏览器测试的候选稿，不是真实模型回复。',model:'test',usage:{total_tokens:20}})});
+app.store.setConfig({baseUrl:'https://api.openai.com/v1',model:'test',temperature:.8,maxTokens:1000});
+await new Promise(resolve=>app.server.listen(0,'127.0.0.1',resolve));
+const browser=await chromium.launch({headless:true,executablePath:process.env.AGENT_TEST_BROWSER??'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));const origin='http://127.0.0.1:'+app.server.address().port;mkdirSync('test-results',{recursive:true});
+let passed=0;const check=label=>{passed++;console.log('PASS '+label)};
+const click=action=>page.locator(`[data-action="${action}"]`).first().click();
+const nav=id=>page.locator(`.nav-item[data-id="${id}"]`).click();
+try{
+ await page.goto(origin);await page.getByRole('heading',{name:'我的作品',exact:true}).waitFor();await page.screenshot({path:'test-results/dashboard.png',fullPage:true});check('作品书架加载，无外部资源依赖');
+ await click('new-work');await page.locator('#object-form [name="title"]').fill('浏览器测试作品');await page.locator('#object-form [name="summary"]').fill('测试完整的创作保存链路。');await page.locator('#object-form [type="submit"]').click();await page.getByRole('heading',{name:'浏览器测试作品',exact:true}).waitFor();check('新建作品');
+ const card=page.locator('.book-card').filter({has:page.getByRole('heading',{name:'浏览器测试作品',exact:true})});await card.locator('[data-action="open-work"]').last().click();await click('new-chapter');await page.locator('#chapter-form [name="title"]').fill('第一章 测试');await page.locator('#chapter-form [type="submit"]').click();await page.locator('#chapter-content').fill('原创测试正文。保存以后应重新载入。');await page.waitForFunction(()=>document.querySelector('#save-state')?.textContent.includes('版本 2'));check('章节新增和自动保存');
+ await page.reload();await page.getByRole('heading',{name:'我的作品',exact:true}).waitFor();await page.locator('.book-card').filter({has:page.getByRole('heading',{name:'浏览器测试作品',exact:true})}).locator('[data-action="open-work"]').last().click();await page.locator('#chapter-content').waitFor();assert.equal(await page.locator('#chapter-content').inputValue(),'原创测试正文。保存以后应重新载入。');check('正文刷新后保留');
+ await page.locator('#editor-generate [name="instruction"]').fill('请续写一段。');await page.locator('#editor-generate [type="submit"]').click();await page.locator('#editor-result [data-action="apply-job"]').waitFor({timeout:10000});await page.locator('#editor-result [data-action="apply-job"]').click();await page.waitForFunction(()=>document.querySelector('#chapter-content')?.value.includes('浏览器测试的候选稿'));check('候选稿显式应用');
+ await click('versions');await page.locator('#modal [data-action="restore-version"]').first().waitFor();check('历史版本可查看');await click('close-modal');await page.screenshot({path:'test-results/editor.png',fullPage:true});
+ await click('work-notes');await page.locator('#modal [data-action="new-object"][data-id="character"]').click();await page.locator('#object-form [name="title"]').fill('测试人物');await page.locator('#object-form [name="content"]').fill('人物的目标和动机。');await page.locator('#object-form [type="submit"]').click();check('作品人物设定保存');
+ for(const id of ['short','script','templates','tools','agents','workflows','analysis','sources','titles','knowledge','ideas','history','ratings']){await nav(id);await page.locator('.page-head h1').waitFor();assert.ok((await page.locator('.page-head h1').textContent()).length>0);check('页面 '+id);}
+ await nav('knowledge');await click('new-object');await page.locator('#object-form [name="title"]').fill('知识点标题');await page.locator('#object-form [name="content"]').fill('测试素材内容');await page.locator('#object-form [name="tags"]').fill('测试, 设定');await page.locator('#object-form [type="submit"]').click();await page.getByRole('heading',{name:'知识点标题',exact:true}).waitFor();await page.locator('#search').fill('素材内容');await page.getByRole('heading',{name:'知识点标题',exact:true}).waitFor();check('知识点新增、标签与全文搜索');
+ await nav('titles');await page.locator('#title-form [name="title"]').fill('雾海来信');await page.locator('#title-form [type="submit"]').click();await page.getByText('规则检查分',{exact:false}).waitFor();check('书名本地规则检查');
+ await nav('workflows');await click('use');await page.locator('#generate-form [name="instruction"]').fill('一个海边小城的故事');await page.locator('#generate-form [type="submit"]').click();await page.locator('#compose-result [data-action="copy-job"]').waitFor({timeout:10000});assert.equal(await page.locator('#compose-result details').count(),3);check('三步工作流完成并展示分步结果');
+ await page.screenshot({path:'test-results/workflow.png',fullPage:true});
+ await page.locator('.top-actions [data-id="settings"]').click();await page.locator('#settings-form [name="model"]').fill('browser-model');await page.locator('#settings-form [type="submit"]').click();await page.waitForTimeout(200);assert.equal(await page.locator('#settings-form [name="model"]').inputValue(),'browser-model');check('模型设置保存');
+ await page.setViewportSize({width:390,height:844});await click('menu');await nav('works');await page.locator('.book-card').first().waitFor();await page.screenshot({path:'test-results/mobile.png',fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));check('手机布局无横向溢出');
+ assert.deepEqual(errors,[]);check('无 JavaScript 页面异常');console.log(`浏览器验证通过 ${passed} 项`);
+}finally{await browser.close();await new Promise(resolve=>app.server.close(resolve));app.store.db.close()}

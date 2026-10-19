@@ -1,0 +1,9 @@
+{
+  "name": "inkflow-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "墨舟 AI：本地优先的小说、短篇和剧本创作工作台",
+  "engines": { "node": ">=22.13" },
+  "scripts": { "start": "node server.mjs", "test": "node --test tests/core.test.mjs" }
+}
